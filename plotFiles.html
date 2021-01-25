@@ -1,0 +1,509 @@
+<html>
+<!-- Modified version of https://hdrhistogram.github.io/HdrHistogramJSDemo/plotFiles.html with GUN added and files removed.-->
+
+<head>
+    <meta charset="UTF-8">
+    <!--Load the AJAX API-->
+    <script type="application/javascript" src="https://www.google.com/jsapi"></script>
+    <script type="application/javascript" src="lib/pako.min.js"></script>
+    <script type="application/javascript" src="lib/hdrhistogram.umd.js"></script>
+    <!-- script src="../../../gun/gun.js"></script -->
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/lib/radix.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/lib/radisk.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/lib/store.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/lib/rindexed.js"></script>
+
+    <script type="text/javascript">
+        var gun = Gun({
+            peers: ["https://kmm-gun.herokuapp.com/gun", "https://gun-us.herokuapp.com/gun"],
+            localStorage: false
+        });
+        // var gun = Gun('https://kmm-gun.herokuapp.com/gun'); //,"https://kmmgun.herokuapp.com/gun"
+        // subscribe to gun inbound    
+        gun._.on('in', function (msg) {
+            //https://stackoverflow.com/questions/6233927/microsecond-timing-in-javascript
+            //hear = window.performance.now() // microseconds from browser load?
+            //console.log(hear);
+        })
+
+        // Init a histogram to catch time measurements/observations
+        const histogramDBG = hdr.build({
+            bitBucketSize: 'packed', // may be 8, 16, 32, 64 or 'packed'
+            useWebAssembly: false, // if false don't need to init wasm 
+            autoResize: true, // default value is true
+            lowestDiscernibleValue: 1, // default value is also 1
+            highestTrackableValue: Number.MAX_SAFE_INTEGER, // can increase up to Number.MAX_SAFE_INTEGER
+            numberOfSignificantValueDigits: 5 // Number between 1 and 5 (inclusive)
+        });
+        // Load the Visualization API and the piechart package.
+        google.load('visualization', '1.0', {
+            'packages': ['corechart']
+        });
+        // 'globals'
+        var chartData = null;
+        var chart = null;
+        var maxPercentile = 1000000;
+        var i = 0;
+        var numberOfObs = 10000; //number of observations to loop
+        var encodedDBGHisto; //="HISTFAAAACN4nJNpmSzMwMDAAsSMQMzMAAGMDPL/wQDG97rGxAQAmhcIjg=="; // dummy data to start
+        var hear; // global for now if needed uncomment console.log in getSouls
+        // Helper functions    
+        function numberWithCommas(x) {
+            return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        }
+        // Set a callback to run when HdrHistogramJS WASM & the Google Visualization API are loaded.
+        hdr.initWebAssembly().then(
+            () => google.setOnLoadCallback(drawInitialChart)
+        );
+
+        runAgain(numberOfObs) /// uugh throwing err first run just move slider
+
+        function runAgain(numberOfObsIn) {
+            histogramDBG.reset()
+            for (var i = 0; i < numberOfObsIn; i++) {
+                getSouls()
+            }
+            encodedDBGHisto = hdr.encodeIntoCompressedBase64(histogramDBG);
+            drawInitialChart()
+        }
+
+        function getSouls() {
+            var start = +new Date; // milliseconds
+            //var start = window.performance.now(); // microsec after decimal
+            // e.g. a value of 1000.123 is 1 second and 123 microseconds
+            id = gun._.ask(function (msg) {
+                //   console.log('self hear time', +new Date - hear)
+                if (!msg.put) {
+                    return
+                }
+                // var diff = (window.performance.now() - start) * 1000 // TODO confirm uofm
+                // if (!msg.lS) {return}
+                // ?? capture observation here or outside function?
+                // console.table(start, window.performance.now(), diff);
+                //console.log(window.performance.now()- start)
+                var diff = +new Date - start 
+
+                histogramDBG.recordValue(diff);
+            }) // isolates the wire
+
+            // gun._.on('out', {'#': id, get : {'#': 'soul'}, DBG: true})  
+            gun._.on('out', {
+                '#': id,
+                get: {
+                    '#': 'soul' //<--needs to exist, put your data here
+                }
+            })
+            /*  gun.get('soul').once(function(data){
+                 // chaining api if you record it here
+                 console.log(+new Date - start, data)
+             }) */
+        }
+        // encoding here is not really needed but the chart rendering is
+        //  expecting it..so optimize later when fixinig wasm=true
+
+        //var encodedDBGHisto = hdr.encodeIntoCompressedBase64(histogramDBG);
+
+        // had this before inserting loop - setTimeout(getSouls, 1000)
+        // NOTEs convo with markn
+        // stats that start with .y (yp v y) should be near end
+        // yh is last? tell mark .y(anything)
+        // browserIn - DBG.yh (or y)
+        // # on node is ID and data ID is not the same 
+
+
+        function setChartData(names, histos) {
+            while (names.length < histos.length) {
+                names.push('Unknown');
+            }
+            var series = [];
+            for (var i = 0; i < histos.length; i++) {
+                if (!histos[i].startsWith("HIST")) {
+                    console.log("Good old histogram output parsing for " + names[i]);
+                    series = appendDataSeries(histos[i], names[i], series);
+                } else {
+                    console.log("Will try base64 decoding on " + names[i]);
+                    var histogram = hdr.decodeFromCompressedBase64(histos[i], 'packed', false); // TODO packed or 32 
+                    var histoOutput = histogram.outputPercentileDistribution();
+                    // console.log(histoOutput) //uugh first load not working but not impacting results
+                    series = appendDataSeries(histoOutput, names[i], series);
+                }
+            }
+            chartData = google.visualization.arrayToDataTable(series);
+        }
+
+
+        function drawInitialChart() {
+            // Load some static example data:
+            //var data1Str = "HISTFAAAACN4nJNpmSzMwMDAAsSMQMzMAAGMDPL/wQDG97rGxAQAmhcIjg==";
+            //var data2Str = "HISTFAAAATR42i1MPUhCYRT97nn3fejrPY2XlVFJQkgRtBT9gBBBWxBBQSANIW0tzY3xyEVEUFwNgloCw5pqiYaGaBCRaBPCNQlqCUK6T70X7jnnnnPvhFcYUorWVa/MPlIfsfbVI2P5zuB9xTnf/dkq3tBjvD79Mfy31B7x3Go4yy+o8h1lqUXpa26HOzP1zUao5RSjOf3Ml7qBJz5Djd6Qp5N38uigRoclOk6VaD+do5WN7UQyEkvq0FQkOm8nQoEY264FV1mKbba0rS3lasuF1sysLRlQCChR0AzWYiiIVAAjDDEHYLAIA9KsxDD9LZtsdLm/MSTkT4VRwOEgm9075Qd9EkdQbueErwpfENyR3wXCJGaxJ4FxXBCugCM0Cd+EDNA0cMsoL6OSwmcK5VfCwynhdxH/bL08Pw==";
+            //var data3Str = "HISTFAAAABx4nJNpmSzMwMDACMXMDBDAyCD/HwzgfAB/wwdn";
+            //var histos = [data1Str, data2Str, data3Str];
+            var names = ['Get Soul round trip']; // match length of histos
+            var data1Str = encodedDBGHisto;
+            var histos = [data1Str]; // important match length of names array
+            setChartData(names, histos);
+            drawChart();
+            //Show a histo in dev console
+            console.log(
+                'Distribution of round trip observations. The total count is the number of observations the peer polled itself. Currently hard coded line 41.'
+            )
+            console.log('paste in console to see histo details: histogramDBG.outputPercentileDistribution()')
+            console.log('This is the full histo that may be put to gun and shared',
+                encodedDBGHisto) //this is what gets stored and passed around in gun
+            console.log(
+                'to decode the histos if packed/wasm pako.min.js is needed in addition to hdrhistogram.umd.js'
+            )
+        }
+        // TODO hook this refresh chart with .on
+
+
+
+        function drawChart() {
+            var ticks = [{
+                    v: 1,
+                    f: '0%'
+                },
+                {
+                    v: 10,
+                    f: '90%'
+                },
+                {
+                    v: 100,
+                    f: '99%'
+                },
+                {
+                    v: 1000,
+                    f: '99.9%'
+                },
+                {
+                    v: 10000,
+                    f: '99.99%'
+                },
+                {
+                    v: 100000,
+                    f: '99.999%'
+                },
+                {
+                    v: 1000000,
+                    f: '99.9999%'
+                },
+                {
+                    v: 10000000,
+                    f: '99.99999%'
+                },
+                {
+                    v: 1000,
+                    f: '99.999999%'
+                }
+            ];
+
+            //var unitSelection = document.getElementById("timeUnitSelection");
+            // var unitSelIndex = unitSelection.selectedIndex;
+            //console.log('you are here ', len)
+
+            //document.getElementById("fileDisplayArea2").innerHTML = numberWithCommas(numberOfObs) + " observations recorded";
+            //var unitText = " Microseconds or fewer at percentile: ";
+            var unitText = " Milliseconds or fewer at percentile: ";
+            var options = {
+                title: 'Chance of response time (y-axis) being n or less',
+                height: 480,
+                //            hAxis: {title: 'Percentile', minValue: 0, logScale: true, ticks:ticks },
+                hAxis: {
+                    title: "Percentile",
+                    minValue: 1,
+                    logScale: true,
+                    ticks: ticks,
+                    viewWindowMode: 'explicit',
+                    viewWindow: {
+                        max: maxPercentile,
+                        min: 1
+                    }
+                },
+                vAxis: {
+                    title: 'Milliseconds  (' + unitText + ')',
+                    //title: 'ms  (' + unitText + ')', //microseconds 
+                    minValue: 0
+                },
+                legend: {
+                    position: 'bottom'
+                }
+            };
+
+            if (chart == null) {
+                chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+            }
+
+            // add tooptips with correct percentile text to data:
+            var columns = [0];
+            for (var i = 1; i < chartData.getNumberOfColumns(); i++) {
+                columns.push(i);
+                columns.push({
+                    type: 'string',
+                    properties: {
+                        role: 'tooltip'
+                    },
+                    calc: (function (j) {
+                        return function (dt, row) {
+                            var percentile = 100.0 - (100.0 / dt.getValue(row, 0));
+                            return dt.getColumnLabel(j) + ': ' + dt.getValue(row, j) +
+                                unitText + percentile.toPrecision(6) +
+                                '\% '
+                        }
+                    })(i)
+                });
+            }
+            var view = new google.visualization.DataView(chartData);
+            view.setColumns(columns);
+
+            chart.draw(view, options);
+
+        }
+
+        function appendDataSeries(histo, name, dataSeries) {
+            var series;
+            var seriesCount;
+            if (dataSeries.length == 0) {
+                series = [
+                    ['X', name]
+                ];
+                seriesCount = 1;
+            } else {
+                series = dataSeries;
+                series[0].push(name);
+                seriesCount = series[0].length - 1;
+            }
+
+            var lines = histo.split("\n");
+
+            var seriesIndex = 1;
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                var values = line.trim().split(/[ ]+/);
+
+                if (line[0] != '#' && values.length == 4) {
+
+                    var y = parseFloat(values[0]);
+                    var x = parseFloat(values[3]);
+
+                    if (!isNaN(x) && !isNaN(y)) {
+
+                        if (seriesIndex >= series.length) {
+                            series.push([x]);
+                        }
+
+                        while (series[seriesIndex].length < seriesCount) {
+                            series[seriesIndex].push(null);
+                        }
+
+                        series[seriesIndex].push(y);
+                        seriesIndex++;
+                    }
+                }
+            }
+
+            while (seriesIndex < series.length) {
+                series[seriesIndex].push(null);
+                seriesIndex++;
+            }
+
+            return series;
+        }
+
+        function timeUnitsSelected(evt) {
+            drawChart();
+        }
+
+        function doExport(event) {
+            saveSvgAsPng(document.querySelector('svg'), 'Histogram', 2.0);
+        }
+
+        (function () {
+            var out$ = typeof exports != 'undefined' && exports || this;
+
+            var doctype =
+                '<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">';
+
+            function inlineImages(callback) {
+                var images = document.querySelectorAll('svg image');
+                var left = images.length;
+                if (left == 0) {
+                    callback();
+                }
+                for (var i = 0; i < images.length; i++) {
+                    (function (image) {
+                        if (image.getAttribute('xlink:href')) {
+                            var href = image.getAttribute('xlink:href').value;
+                            if (/^http/.test(href) && !(new RegExp('^' + window.location.host).test(href))) {
+                                throw new Error("Cannot render embedded images linking to external hosts.");
+                            }
+                        }
+                        var canvas = document.createElement('canvas');
+                        var ctx = canvas.getContext('2d');
+                        var img = new Image();
+                        img.src = image.getAttribute('xlink:href');
+                        img.onload = function () {
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            ctx.drawImage(img, 0, 0);
+                            image.setAttribute('xlink:href', canvas.toDataURL('image/png'));
+                            left--;
+                            if (left == 0) {
+                                callback();
+                            }
+                        }
+                    })(images[i]);
+                }
+            }
+
+            function styles(dom) {
+                var css = "";
+                var sheets = document.styleSheets;
+                for (var i = 0; i < sheets.length; i++) {
+                    var rules = sheets[i].cssRules;
+                    if (rules != null) {
+                        for (var j = 0; j < rules.length; j++) {
+                            var rule = rules[j];
+                            if (typeof (rule.style) != "undefined") {
+                                css += rule.selectorText + " { " + rule.style.cssText + " }\n";
+                            }
+                        }
+                    }
+                }
+
+                var s = document.createElement('style');
+                s.setAttribute('type', 'text/css');
+                s.innerHTML = "<![CDATA[\n" + css + "\n]]>";
+
+                var defs = document.createElement('defs');
+                defs.appendChild(s);
+                return defs;
+            }
+
+            out$.svgAsDataUri = function (el, scaleFactor, cb) {
+                scaleFactor = scaleFactor || 1;
+
+                inlineImages(function () {
+                    var outer = document.createElement("div");
+                    var clone = el.cloneNode(true);
+                    var width = parseInt(
+                        clone.getAttribute('width') ||
+                        clone.style.width ||
+                        out$.getComputedStyle(el).getPropertyValue('width')
+                    );
+                    var height = parseInt(
+                        clone.getAttribute('height') ||
+                        clone.style.height ||
+                        out$.getComputedStyle(el).getPropertyValue('height')
+                    );
+
+                    var xmlns = "http://www.w3.org/2000/xmlns/";
+
+                    clone.setAttribute("version", "1.1");
+                    clone.setAttributeNS(xmlns, "xmlns", "http://www.w3.org/2000/svg");
+                    clone.setAttributeNS(xmlns, "xmlns:xlink", "http://www.w3.org/1999/xlink");
+                    clone.setAttribute("width", width * scaleFactor);
+                    clone.setAttribute("height", height * scaleFactor);
+                    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
+                    outer.appendChild(clone);
+
+                    clone.insertBefore(styles(clone), clone.firstChild);
+
+                    var svg = doctype + outer.innerHTML;
+                    var uri = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(
+                        svg)));
+                    if (cb) {
+                        cb(uri);
+                    }
+                });
+            }
+
+            out$.saveSvgAsPng = function (el, name, scaleFactor) {
+                out$.svgAsDataUri(el, scaleFactor, function (uri) {
+                    var image = new Image();
+                    image.src = uri;
+                    image.onload = function () {
+                        var canvas = document.createElement('canvas');
+                        canvas.width = image.width;
+                        canvas.height = image.height;
+                        var context = canvas.getContext('2d');
+                        context.drawImage(image, 0, 0);
+
+                        var a = document.createElement('a');
+                        a.download = name;
+                        a.href = canvas.toDataURL('image/png');
+                        document.body.appendChild(a);
+                        a.click();
+                    }
+                });
+            }
+        })();
+    </script>
+
+    <style>
+        .slider-width500 {
+            width: 500px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Gun Performance - Histogram (CDF) Plotter</h2>
+    <pre id="fileDisplayArea"> Open dev console to see histo buckets.
+        IF you see 'Data column(s) for axis #0 cannot be of type string'
+        move the observations slider and or refresh the browser. I'm being
+        lazy and haven't fixed that staring case.
+    </pre>
+
+    <div id="fileDisplayArea2">
+        Use observation slider to increase sample size. Note 100k
+        will take a few seconds to render. Measuring a get 'soul'
+    </div>
+
+    <!--Div that will hold the chart-->
+    <div id="chart_div">None Loaded</div>
+    &nbsp; &nbsp; &nbsp; &nbsp;
+    <p>
+        Percentile range:
+
+        <input type="range" class="slider-width500" min="1" max="8" value="6" step="1" width="300px"
+            onchange="showValue(this.value)" />
+        <span id="percentileRange">99.9999%</span>
+        <script type="text/javascript">
+            function showValue(newValue) {
+                var x = Math.pow(10, newValue);
+                percentile = 100.0 - (100.0 / x);
+                document.getElementById("percentileRange").innerHTML = percentile + "%";
+                maxPercentile = x;
+                drawChart();
+            }
+        </script>
+    </p>
+
+    <p>
+        Observations:
+
+        <input type="range" class="slider-width500" min="1" max="3" value="2" step="1" width="300px"
+            onchange="getObsValue(this.value)" />
+        <span id="obsRange">10000</span>
+        <script type="text/javascript">
+            function getObsValue(newValue) {
+                var x = Math.pow(10, newValue);
+                maxObs = 100 * x;
+                document.getElementById("obsRange").innerHTML = numberWithCommas(maxObs);
+                //maxPercentile = x;
+                runAgain(maxObs);
+                drawChart();
+            }
+        </script>
+    </p>
+
+    <p>
+        <br>
+        *** Note: The 'packed' histogram format is base64 encoded
+        and looks like this example:
+        "HISTFAAAAB542pNpmSzMwMDAxAABzFCaEUoz2X+AMIKZAEARAtM="
+    </p>
+</body>
+
+</html>
