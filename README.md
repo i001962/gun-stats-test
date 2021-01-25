@@ -8,8 +8,10 @@ This repo shows an example of capturing performance for a round trip on get soul
 
 Live (when it's working) Demo [here](http://plato.seallake.net/API/v1/data/gun-stats-test/plotHisto2/plotFiles.html)
 
-Warning- When I added the observation slider I failed to initialize the chart so on first load...errrrrr Move the observations slider and you should see the chart. I never did get this to display in Firefox but Chrome seems to work. PRs welcome. *Even if the chart doesn't display you may inspect the performance histogram in the dev console where there are instructions.*
+Warning- CHART IS NOT WORKING. When I added the observation slider I failed to initialize the chart so on first load or any subsequent updates the histogram. That's on my TODO list. IF you move the observations slider and you 'may' see the chart. I never did get this to display in Firefox but Chrome does seems to display. PRs welcome. *Even if the chart doesn't display you may inspect the performance histogram in the dev console where there are instructions.*
 
-The performance observations are binned using [hdr-histogram](https://github.com/HdrHistogram/HdrHistogramJS).
+The performance observations are binned using [hdr-histogram](https://github.com/HdrHistogram/HdrHistogramJS) and will continue to bucked observations as the peer (this plotFiles.html in this case) is getting data. Rerun 
+```histogramDBG.outputPercentileDistribution()```
+in the console and to see the observation totalCount. IF the chart is displaying it is only updated after the observation slide is moved. It does not live update with the histogram changes.
 
 Encoding the histogram and .put(ting) to gundb at regular intervals would enable sharing of peer performance.
