@@ -2,7 +2,7 @@
 
 ### The idea is to accumulate the performance statistics on a gun peer and periodically share those with other peers.
 
-At first I had experimented measuring only peers running nodejs [see here.] (https://github.com/amark/gun/compare/master...i001962:master) Nodejs peers are reporting performance stats already and storing them in stats.radata every 15 seconds. The default install has stats collected and overwritten(?), presumably to save disk space, as point in time snapshots vs aggregated performance.
+At first I had experimented measuring only peers running nodejs [see here.](https://github.com/amark/gun/compare/master...i001962:master) Nodejs peers are reporting performance stats already and storing them in stats.radata every 15 seconds. The default install has stats collected and overwritten(?), presumably to save disk space, as point in time snapshots vs aggregated performance.
 
 This repo shows an example of capturing performance for a round trip on get soul. You may add whatever measurement you want instead but as of now you'll need to know the wire protocol which I don't at time of this writing. markn walked me through the getSoul function and setting the timestamps. 
 
